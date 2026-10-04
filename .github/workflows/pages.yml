@@ -1,0 +1,97 @@
+name: Deploy to GitHub Pages
+
+# The live app is always rebuilt from the committed source, so what people run
+# at the Pages URL is reproducible from the repository. That matters here: the
+# project is AGPL-3.0, and section 13 obliges us to offer the source of
+# whatever we serve.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; never cancel one mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Gate the deploy on correctness rather than shipping a broken app.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Offline tests
+        run: npm test
+
+      - name: Build single-file app
+        run: npm run build
+
+      - name: Verify the artifact is self-contained
+        run: |
+          set -euo pipefail
+          src=dist/sol-token-launcher.html
+          test -f "$src"
+          # Pages serves the folder root, so the app has to answer on "/".
+          cp "$src" dist/index.html
+          # It must be one inline document: no CDN, no fonts, no sibling assets.
+          # Outbound <a href> links are fine, so only look for resource loads.
+          if grep -q -E '(<script[^>]+src=|<link |<link rel="preconnect")|@import' "$src"; then
+            echo "::error::built app loads external resources; it must work offline"
+            grep -n -E '(<script[^>]+src=|<link |@import)' "$src" | head
+            exit 1
+          fi
+          echo "self-contained: $(du -h "$src" | cut -f1)"
+
+      - name: Sanity check the built app loads
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const html = fs.readFileSync("dist/index.html", "utf8");
+            const must = [
+              ["doctype", "<!doctype html>"],
+              ["inline script", "<script>"],
+              ["inline style", "<style>"],
+              ["token form", "customRecipientField"],
+              ["AGPL notice", "agpl-3.0"],
+              ["source link", "hydrapad/solana-token-deployer"],
+            ];
+            const missing = must.filter(([, needle]) => !html.includes(needle)).map(([n]) => n);
+            if (missing.length) {
+              console.error("::error::built app is missing " + missing.join(", "));
+              process.exit(1);
+            }
+            console.log("built app contains all expected markers");
+          '
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
