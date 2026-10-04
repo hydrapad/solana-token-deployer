@@ -45,21 +45,6 @@ first, then switch to **Mainnet**.
 | **Safety** | Every transaction is **simulated before you sign it**. If it would fail on chain, nothing is sent and you pay no fee. |
 | **Receipt** | A JSON receipt with the mint address, authorities and transaction links, downloadable after launch. |
 
-### Connect from a phone
-
-Browser extensions only help on desktop. To connect a mobile wallet, add a free
-**WalletConnect project ID** in **Advanced → WalletConnect project ID**
-([cloud.reown.com](https://cloud.reown.com)), and "WalletConnect (mobile)"
-appears in the wallet list — scan the QR with Phantom, Solflare or any other
-WalletConnect wallet.
-
-The ID is stored only in that browser and sent nowhere except WalletConnect's
-relay. Nothing is baked into the build, so the public repo and any fork work
-without a key. WalletConnect is off until you provide one.
-
-> Adding it grows the single file from ~1.08 MB to ~1.58 MB, because the
-> protocol (relay, crypto, JSON-RPC) is around 500 KB on its own.
-
 ### About metadata
 
 The token's **name and symbol are written on chain** and will display
@@ -105,7 +90,6 @@ src/
   lib/
     deploy.ts       instruction building, packing, simulation, submission
     wallet.ts       Wallet Standard + legacy providers (Phantom/Solflare/Backpack)
-    walletconnect.ts  optional WalletConnect v2 for mobile wallets
     net.ts          RPC failover, network definitions
     metadata.ts     Metaplex JSON generation, optional IPFS upload
     units.ts        supply <-> base units conversion
@@ -137,10 +121,10 @@ source, asserts it is still self-contained and intact, and publishes it to
 - The metadata PDA uses seeds `["metadata", <metadata program>, <mint>]`.
 - Steps are packed into as few transactions as the 1232-byte packet limit
   allows — normally one.
-- WalletConnect is a thin layer over `@walletconnect/universal-provider` rather
-  than the full Reown AppKit: AppKit ships its own UI and controller stack. The
-  `solana_signTransaction` request shape and CAIP-2 chain ids are pinned by
-  tests, since a typo there makes pairing fail silently.
+- Wallets are discovered via Wallet Standard (`navigator.wallets`) with a
+  fallback to the legacy `window.phantom` / `solflare` / `backpack` providers.
+  Solana signing features live under the `solana` namespace, which is where a
+  naive `getFeatures()` lookup would miss them.
 
 ---
 
@@ -176,8 +160,7 @@ asked to sign.
 ## What has been verified
 
 - 122 offline checks over instruction encoding, discriminators, account ordering,
-  PDA derivation, signature slots, packet sizes, supply maths, base58 round-trips
-  and the WalletConnect chain ids and QR rendering.
+  PDA derivation, signature slots, packet sizes and supply maths.
 - 24 live simulations on **both devnet and mainnet**, covering every combination
   the form can produce: authority toggles, metadata on/off, metadata locked vs
   editable, seller fees, 0 and 1 and 9 decimals, maximum-length name and symbol,
@@ -186,12 +169,6 @@ asked to sign.
   preview, simulation gating, wallet rejection, insufficient balance, network
   switching, and the success screen.
 
-**Not verified:** the WalletConnect handshake itself — pairing a phone and the
-`solana_signTransaction` round trip. That needs a real project ID and a real
-wallet on a real phone. Everything around it is tested: the QR renders from a
-realistic `wc:` URI, the option appears and disappears with the project ID,
-pairing failures surface actionable messages, and cancel is clean. But treat
-first contact with a phone as unproven.
 
 ## Limitations
 
@@ -199,8 +176,6 @@ first contact with a phone as unproven.
   Use [Pump.fun](https://pump.fun), Raydium or Meteora after launching.
 - The free public RPCs are rate limited and occasionally slow. Use your own for
   mainnet.
-- WalletConnect pairing and signing is untested against a real phone wallet. See
-  above.
 - Metadata hosting is manual unless you supply an IPFS API key — Metaplex needs
   a reachable URL for the JSON.
 - This is a launcher, not an exchange or a market maker.

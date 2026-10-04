@@ -4,13 +4,6 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 import { base58Encode } from "./base58";
-import {
-  WALLET_CONNECT_KEY,
-  WALLET_CONNECT_NAME,
-  connectWalletConnect,
-  isWalletConnectConfigured,
-  type WalletConnectSession,
-} from "./walletconnect";
 
 /* -------------------------------------------------------------------------- */
 /*  Wallet Standard (Phantom, Solflare, Backpack, OKX, Coinbase, ...)          */
@@ -85,23 +78,6 @@ export interface WalletOption {
   standard: boolean;
   standardWallet?: StandardWallet;
   legacyProvider?: LegacyProvider;
-  /** Set on the synthetic WalletConnect entry (mobile pairing). */
-  walletConnect?: boolean;
-}
-
-/** Hooks the UI needs while pairing with a phone. */
-export interface WalletConnectUi {
-  /** Shows a QR for the pairing URI. */
-  onUri(uri: string): void;
-  /** Called if the session is later torn down. */
-  onSessionEnd(message: string): void;
-}
-
-let walletConnectUi: WalletConnectUi | null = null;
-
-/** Registered by the UI so pairing can surface a QR code. */
-export function setWalletConnectHandlers(ui: WalletConnectUi | null): void {
-  walletConnectUi = ui;
 }
 
 export interface Session {
@@ -130,16 +106,6 @@ export function listWallets(): WalletOption[] {
     if (seen.has(name.toLowerCase())) continue;
     seen.add(name.toLowerCase());
     options.push({ key: `legacy:${id}`, name, standard: false, legacyProvider: provider });
-  }
-
-  // Mobile pairing, offered last so extensions stay the obvious first choice.
-  if (isWalletConnectConfigured()) {
-    options.push({
-      key: `wc:${WALLET_CONNECT_KEY}`,
-      name: `${WALLET_CONNECT_NAME} (mobile)`,
-      standard: false,
-      walletConnect: true,
-    });
   }
 
   return options;
@@ -285,33 +251,8 @@ async function connectLegacy(option: WalletOption): Promise<Session> {
   };
 }
 
-async function connectWalletConnectSession(cluster: string): Promise<Session> {
-  if (!walletConnectUi) {
-    throw new Error("WalletConnect is not wired up in this build.");
-  }
-
-  const session: WalletConnectSession = await connectWalletConnect(cluster, {
-    onUri: (uri) => walletConnectUi?.onUri(uri),
-    onError: (message) => walletConnectUi?.onSessionEnd(message),
-  });
-
-  const listeners: ((publicKey: PublicKey | null) => void)[] = [];
-
-  return {
-    key: WALLET_CONNECT_KEY,
-    name: WALLET_CONNECT_NAME,
-    publicKey: session.publicKey,
-    onAccountChange: (cb) => listeners.push(cb),
-    sendTransaction: (tx, connection) => session.signAndSendTransaction(tx, connection),
-    disconnect: () => session.disconnect(),
-  };
-}
-
-export async function connectWallet(option: WalletOption, cluster: string): Promise<Session> {
+export async function connectWallet(option: WalletOption): Promise<Session> {
   try {
-    if (option.walletConnect) {
-      return await connectWalletConnectSession(cluster);
-    }
     return option.standard ? await connectStandard(option) : await connectLegacy(option);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

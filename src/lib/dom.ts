@@ -68,6 +68,10 @@ export function friendlyError(err: unknown): string {
   if (/fetch failed|network|Failed to fetch|ECONNREFUSED/i.test(raw)) {
     return "Lost the connection to the Solana network. Check your internet and try again.";
   }
+  if (/did not pass signature verification|signature verification failed/i.test(raw)) {
+    return "Your wallet did not sign the transaction correctly, so it was rejected before being " +
+      "sent. Try reconnecting the wallet, or use a different one.";
+  }
   if (/429|Too Many Requests/i.test(raw)) {
     return "The public RPC is rate limiting you. Add your own endpoint in Advanced for a smoother deploy.";
   }
