@@ -4,6 +4,13 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 import { base58Encode } from "./base58";
+import {
+  WALLET_CONNECT_KEY,
+  WALLET_CONNECT_NAME,
+  connectWalletConnect,
+  isWalletConnectConfigured,
+  type WalletConnectSession,
+} from "./walletconnect";
 
 /* -------------------------------------------------------------------------- */
 /*  Wallet Standard (Phantom, Solflare, Backpack, OKX, Coinbase, ...)          */
@@ -78,6 +85,23 @@ export interface WalletOption {
   standard: boolean;
   standardWallet?: StandardWallet;
   legacyProvider?: LegacyProvider;
+  /** Set on the synthetic WalletConnect entry (mobile pairing). */
+  walletConnect?: boolean;
+}
+
+/** Hooks the UI needs while pairing with a phone. */
+export interface WalletConnectUi {
+  /** Shows a QR for the pairing URI. */
+  onUri(uri: string): void;
+  /** Called if the session is later torn down. */
+  onSessionEnd(message: string): void;
+}
+
+let walletConnectUi: WalletConnectUi | null = null;
+
+/** Registered by the UI so pairing can surface a QR code. */
+export function setWalletConnectHandlers(ui: WalletConnectUi | null): void {
+  walletConnectUi = ui;
 }
 
 export interface Session {
@@ -108,6 +132,16 @@ export function listWallets(): WalletOption[] {
     options.push({ key: `legacy:${id}`, name, standard: false, legacyProvider: provider });
   }
 
+  // Mobile pairing, offered last so extensions stay the obvious first choice.
+  if (isWalletConnectConfigured()) {
+    options.push({
+      key: `wc:${WALLET_CONNECT_KEY}`,
+      name: `${WALLET_CONNECT_NAME} (mobile)`,
+      standard: false,
+      walletConnect: true,
+    });
+  }
+
   return options;
 }
 
@@ -118,11 +152,24 @@ export function onWalletsChanged(cb: () => void): void {
   globalThis.addEventListener?.("load", () => cb());
 }
 
-function requireFeature(wallet: StandardWallet, name: string): Feature {
-  const features = wallet.getFeatures() as Record<string, Feature | undefined>;
-  const feature = features[name];
+/**
+ * Solana features live under the `solana` namespace in Wallet Standard, e.g.
+ * `features.solana["solana:signTransaction"]`. Some wallets also expose them at
+ * the top level, so check both.
+ */
+function solanaFeature(wallet: StandardWallet, name: string): Feature | undefined {
+  const features = wallet.getFeatures() as Record<string, unknown>;
+  const nested = features["solana"] as Record<string, Feature | undefined> | undefined;
+  return nested?.[name] ?? (features[name] as Feature | undefined);
+}
+
+function requireSolanaFeature(wallet: StandardWallet, name: string): Feature {
+  const feature = solanaFeature(wallet, name);
   if (!feature) {
-    throw new Error(`${wallet.name ?? "This wallet"} does not support the Solana signing feature "${name}".`);
+    throw new Error(
+      `${wallet.name ?? "This wallet"} cannot sign Solana transactions: it exposes neither ` +
+        `solana:${name} nor ${name}.`,
+    );
   }
   return feature;
 }
@@ -169,9 +216,7 @@ async function connectStandard(option: WalletOption): Promise<Session> {
     publicKey,
     onAccountChange: (cb) => listeners.push(cb),
     async sendTransaction(tx, connection) {
-      const solana = (wallet.getFeatures()["solana"] ?? {}) as Record<string, Feature | undefined>;
-
-      const signAndSend = solana["solana:signAndSendTransaction"] as unknown as
+      const signAndSend = solanaFeature(wallet, "solana:signAndSendTransaction") as unknown as
         | {
             signAndSendTransaction(input: {
               transaction: VersionedTransaction;
@@ -189,7 +234,7 @@ async function connectStandard(option: WalletOption): Promise<Session> {
         return base58Encode(signature);
       }
 
-      const signOnly = requireFeature(wallet, "solana:signTransaction") as unknown as {
+      const signOnly = requireSolanaFeature(wallet, "solana:signTransaction") as unknown as {
         signTransaction(input: { transaction: VersionedTransaction }): Promise<
           { signedTransaction: Uint8Array | VersionedTransaction }[]
         >;
@@ -240,8 +285,33 @@ async function connectLegacy(option: WalletOption): Promise<Session> {
   };
 }
 
-export async function connectWallet(option: WalletOption): Promise<Session> {
+async function connectWalletConnectSession(cluster: string): Promise<Session> {
+  if (!walletConnectUi) {
+    throw new Error("WalletConnect is not wired up in this build.");
+  }
+
+  const session: WalletConnectSession = await connectWalletConnect(cluster, {
+    onUri: (uri) => walletConnectUi?.onUri(uri),
+    onError: (message) => walletConnectUi?.onSessionEnd(message),
+  });
+
+  const listeners: ((publicKey: PublicKey | null) => void)[] = [];
+
+  return {
+    key: WALLET_CONNECT_KEY,
+    name: WALLET_CONNECT_NAME,
+    publicKey: session.publicKey,
+    onAccountChange: (cb) => listeners.push(cb),
+    sendTransaction: (tx, connection) => session.signAndSendTransaction(tx, connection),
+    disconnect: () => session.disconnect(),
+  };
+}
+
+export async function connectWallet(option: WalletOption, cluster: string): Promise<Session> {
   try {
+    if (option.walletConnect) {
+      return await connectWalletConnectSession(cluster);
+    }
     return option.standard ? await connectStandard(option) : await connectLegacy(option);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

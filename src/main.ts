@@ -25,9 +25,11 @@ import {
   connectWallet,
   listWallets,
   onWalletsChanged,
+  setWalletConnectHandlers,
   type Session,
   type WalletOption,
 } from "./lib/wallet";
+import { friendlyWalletConnectError, getProjectId, setProjectId } from "./lib/walletconnect";
 import {
   executePlan,
   formatSol,
@@ -420,8 +422,18 @@ function openWalletPicker(): void {
   const wallets = listWallets();
   const list = $<HTMLUListElement>("#walletList");
   const note = $("#walletModalNote");
+  const wcHint = $("#wcNote");
   list.innerHTML = "";
   note.hidden = wallets.length > 0;
+
+  // If WalletConnect is off, say why rather than silently hiding it.
+  if (!getProjectId()) {
+    wcHint.textContent =
+      "To connect from a phone, add a free WalletConnect project ID in Advanced below.";
+    wcHint.classList.remove("hidden");
+  } else {
+    wcHint.classList.add("hidden");
+  }
 
   for (const option of wallets) {
     const item = document.createElement("li");
@@ -437,7 +449,7 @@ function openWalletPicker(): void {
     } else {
       const placeholder = document.createElement("span");
       placeholder.className = "ph";
-      placeholder.textContent = option.name.slice(0, 2).toUpperCase();
+      placeholder.textContent = option.walletConnect ? "QR" : option.name.slice(0, 2).toUpperCase();
       button.append(placeholder);
     }
 
@@ -454,14 +466,89 @@ function openWalletPicker(): void {
 
 async function connectTo(option: WalletOption): Promise<void> {
   $<HTMLDialogElement>("#walletModal").close();
+
+  if (option.walletConnect) {
+    await beginWalletConnectPairing();
+    return;
+  }
+
   try {
-    state.session = await connectWallet(option);
+    state.session = await connectWallet(option, state.cluster);
   } catch (err) {
     toast(friendlyError(err), "err");
     return;
   }
 
-  state.session.onAccountChange((publicKey) => {
+  afterConnect();
+}
+
+/* ---------------------------- WalletConnect ---------------------------- */
+
+let pairingCancelled = false;
+
+/** Renders the QR and resolves once the phone approves. */
+async function beginWalletConnectPairing(): Promise<void> {
+  const modal = $<HTMLDialogElement>("#wcModal");
+  const qr = $<HTMLImageElement>("#wcQr");
+  const pending = $("#wcPending");
+  const errorBox = $("#wcError");
+
+  qr.hidden = true;
+  qr.removeAttribute("src");
+  pending.hidden = false;
+  errorBox.classList.add("hidden");
+  pairingCancelled = false;
+  modal.showModal();
+
+  try {
+    // Imported lazily so `qrcode` is only touched on the WalletConnect path.
+    const QRCode = (await import("qrcode")).default;
+
+    setWalletConnectHandlers({
+      onUri: (uri) => {
+        $("#wcUri").textContent = uri;
+        QRCode.toDataURL(uri, { width: 232, margin: 1, errorCorrectionLevel: "M" })
+          .then((dataUrl) => {
+            if (pairingCancelled) return;
+            qr.src = dataUrl;
+            qr.hidden = false;
+            pending.hidden = true;
+          })
+          .catch(() => {
+            pending.textContent = "Could not render a QR code — use the pairing link below.";
+          });
+      },
+      onSessionEnd: (message) => {
+        if (state.session) {
+          state.session = null;
+          state.connection = null;
+          renderWallet();
+          refreshForm();
+        }
+        toast(message, "err");
+      },
+    });
+
+    state.session = await connectWallet({ key: "wc", name: "WalletConnect", standard: false, walletConnect: true }, state.cluster);
+  } catch (err) {
+    // WalletConnect failures come from the relay, not Solana, so they need
+    // their own wording.
+    const message = pairingCancelled ? "" : friendlyWalletConnectError(err);
+    if (message) {
+      errorBox.textContent = message;
+      errorBox.classList.remove("hidden");
+    }
+    setWalletConnectHandlers(null);
+    return;
+  }
+
+  setWalletConnectHandlers(null);
+  modal.close();
+  afterConnect();
+}
+
+function afterConnect(): void {
+  state.session!.onAccountChange((publicKey) => {
     if (!publicKey) {
       state.session = null;
       state.connection = null;
@@ -472,8 +559,7 @@ async function connectTo(option: WalletOption): Promise<void> {
   });
 
   renderWallet();
-  await refreshCluster();
-  toast(`Connected ${option.name}`, "ok");
+  void refreshCluster();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -928,6 +1014,32 @@ function wire(): void {
   });
 
   $("#jsonBtn").addEventListener("click", openJsonDialog);
+
+  // WalletConnect project ID: stored locally only, never committed or sent
+  // anywhere except the WalletConnect relay.
+  const wcField = $<HTMLInputElement>("#wcProjectId");
+  wcField.value = getProjectId();
+  wcField.addEventListener("change", () => {
+    setProjectId(wcField.value);
+    wcField.value = getProjectId();
+    toast(
+      getProjectId()
+        ? "WalletConnect enabled — mobile wallets now appear in the wallet list."
+        : "WalletConnect disabled.",
+      "ok",
+    );
+    saveSettings();
+  });
+
+  $("#wcCopyBtn").addEventListener("click", () => {
+    const uri = $("#wcUri").textContent?.trim();
+    if (uri) void copyText(uri).then(() => toast("Pairing link copied", "ok"));
+  });
+
+  $("#wcCancel").addEventListener("click", () => {
+    pairingCancelled = true;
+    setWalletConnectHandlers(null);
+  });
 
   for (const button of $$<HTMLButtonElement>("[data-copy]")) {
     button.addEventListener("click", () => {

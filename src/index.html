@@ -211,6 +211,24 @@
               <small class="hint">Royalty % on secondary sales. 0 is right for almost every token.</small>
             </div>
           </div>
+          <label class="field">
+            <span>WalletConnect project ID</span>
+            <input
+              id="wcProjectId"
+              type="password"
+              placeholder="Only needed to connect from a phone"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <small class="hint">
+              Optional. Adds &ldquo;WalletConnect (mobile)&rdquo; to the wallet list so you can
+              connect by scanning a QR code instead of installing an extension. Get a free ID at
+              <a href="https://cloud.reown.com" target="_blank" rel="noopener">cloud.reown.com</a>.
+              Stored only in this browser and never sent anywhere except WalletConnect&rsquo;s
+              relay.
+            </small>
+          </label>
+          <p class="note note-warn hidden" id="wcNote"></p>
           <label class="checkbox compact">
             <input type="checkbox" id="remember" checked />
             <span>Remember my settings on this device</span>
@@ -329,6 +347,28 @@
         <button type="button" class="btn btn-ghost" id="downloadJsonBtn">Download file</button>
         <form method="dialog"><button class="btn btn-primary">Done</button></form>
       </div>
+    </dialog>
+
+    <!-- WalletConnect pairing -->
+    <dialog class="modal" id="wcModal">
+      <h3>Scan with your phone</h3>
+      <p class="lede">
+        Open your Solana wallet app and scan this code, or use WalletConnect from its wallet
+        picker.
+      </p>
+      <div class="qr-frame">
+        <img id="wcQr" alt="WalletConnect pairing QR code" width="232" height="232" />
+        <div class="qr-pending" id="wcPending">Waiting for a pairing code&hellip;</div>
+      </div>
+      <details class="wc-fallback">
+        <summary>Can't scan? Copy the pairing link</summary>
+        <code class="mono" id="wcUri"></code>
+        <button type="button" class="btn btn-ghost btn-sm" id="wcCopyBtn">Copy link</button>
+      </details>
+      <p class="note note-warn hidden" id="wcError"></p>
+      <form method="dialog">
+        <button class="btn btn-ghost" id="wcCancel">Cancel</button>
+      </form>
     </dialog>
 
     <div class="toast-host" id="toastHost" aria-live="polite"></div>

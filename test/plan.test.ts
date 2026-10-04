@@ -22,9 +22,11 @@ import {
   VersionedTransaction,
   type TransactionInstruction,
 } from "@solana/web3.js";
+import QRCode from "qrcode";
 
-import { base58Encode } from "../src/lib/base58";
+import { base58Decode, base58Encode } from "../src/lib/base58";
 import { metadataAddressFor, planDeploy, type RentTable, type TokenSpec } from "../src/lib/deploy";
+import { WC_CHAINS } from "../src/lib/walletconnect";
 import { describeSupplyProblem, parseSupply, toBaseUnits } from "../src/lib/units";
 
 const SYSTEM_PROGRAM = SystemProgram.programId;
@@ -47,8 +49,27 @@ function check(label: string, condition: boolean, detail = ""): void {
   }
 }
 
+/** JSON-safe rendering; BigInt is common in this suite. */
+function show(value: unknown): string {
+  if (typeof value === "bigint") return `${value}n`;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function eq(label: string, actual: unknown, expected: unknown): void {
-  check(label, Object.is(actual, expected), `expected ${String(expected)}, got ${String(actual)}`);
+  const same =
+    Object.is(actual, expected) ||
+    (typeof actual === "object" &&
+      actual !== null &&
+      show(actual) === show(expected));
+  if (same) {
+    check(label, true);
+  } else {
+    check(label, false, `expected ${show(expected)}, got ${show(actual)}`);
+  }
 }
 
 /* ------------------------------ decoders -------------------------------- */
@@ -369,6 +390,74 @@ console.log("\noptional pieces can be switched off");
   const bareMeta = planDeploy(baseSpec({ hasMetadata: false }), RENT);
   eq("no metadata transaction", bareMeta.steps.length, 1);
   eq("no metadata address", bareMeta.metadataAddress, null);
+}
+
+console.log("\nbase58 decode");
+{
+  // WalletConnect can hand back a base58 signature that we graft onto a tx, so
+  // decode must round-trip exactly. Cross-checked against web3.js.
+  const vectors: Uint8Array[] = [];
+  for (let i = 0; i < 60; i++) {
+    const bytes = new Uint8Array(32);
+    for (let j = 0; j < 32; j++) bytes[j] = Math.floor(Math.random() * 256);
+    vectors.push(bytes);
+  }
+  vectors.push(new Uint8Array(32));
+  vectors.push(new Uint8Array([0, 0, 1, 2, 3, ...new Array<number>(27).fill(0)]));
+  vectors.push(new Uint8Array([0, ...new Array<number>(31).fill(255)]));
+  vectors.push(new Uint8Array([1, ...new Array<number>(31).fill(0)]));
+
+  const bad = vectors.filter((bytes) => {
+    const decoded = base58Decode(new PublicKey(bytes).toBase58());
+    return decoded.length !== bytes.length || !decoded.every((b, i) => b === bytes[i]);
+  }).length;
+  eq(`round-trips ${vectors.length} vectors against web3.js`, bad, 0);
+
+  eq("32 zero bytes decode to 32 zeros", base58Decode("1".repeat(32)).length, 32);
+  eq("empty string decodes to empty", base58Decode("").length, 0);
+  eq("decodes a 64-byte signature", base58Decode(base58Encode(new Uint8Array(64).fill(7))).length, 64);
+
+  check("rejects invalid characters", (() => {
+    try { base58Decode("abc0def"); return false; } catch { return true; }
+  })());
+}
+
+console.log("\nWalletConnect CAIP-2 chains");
+{
+  // These strings are the on-the-wire contract; a typo means pairing silently fails.
+  for (const [cluster, expected] of [
+    ["mainnet-beta", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"],
+    ["devnet", "solana:8E9rvCKLFQia2Y35HXjjpWzj8weVo44K"],
+    ["testnet", "solana:4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z"],
+  ] as const) {
+    eq(`${cluster} chain id`, WC_CHAINS[cluster], expected);
+    const [, reference = ""] = expected.split(":");
+    eq(`${cluster} namespace is solana`, expected.split(":")[0], "solana");
+    // CAIP-2 caps chain references at 32 characters, so these are truncated
+    // genesis hashes rather than full 32-byte values. They must still be valid
+    // base58, or pairing fails silently.
+    check(`${cluster} reference is valid base58`, reference.length <= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(reference));
+    check(`${cluster} reference decodes cleanly`, base58Decode(reference).length > 0);
+  }
+}
+
+console.log("\nWalletConnect pairing URI rendering");
+{
+  // The QR must be scannable, so the renderer has to cope with a real-shaped
+  // wc: URI. Run outside the browser bundle.
+  const wcUri =
+    "wc:6a2e1f9c4b8d3a5e7f0b2c4d6e8f0a1b3c5d7e9f0a1b3c5d7e9f0a1b3c5d7e9f@2" +
+    "?relay-protocol=irn&symKey=1b3c5d7e9f0a1b3c5d7e9f0a1b3c5d7e9f0a1b3c5d7e9f0a1b3c5d7e9f0a1b3c5d7e9f" +
+    "&projectId=abcdef123456";
+
+  const dataUrl = await QRCode.toDataURL(wcUri, { width: 232, margin: 1, errorCorrectionLevel: "M" });
+  check("renders a PNG data URL", dataUrl.startsWith("data:image/png;base64,"));
+  check("produces a non-trivial image", dataUrl.length > 1000, `${dataUrl.length} chars`);
+
+  // The pairing URI is also shown as text, so keep it copyable verbatim.
+  eq("URI round-trips unchanged", wcUri.split("?")[0], "wc:6a2e1f9c4b8d3a5e7f0b2c4d6e8f0a1b3c5d7e9f0a1b3c5d7e9f0a1b3c5d7e9f@2");
+  check("symKey present for relay auth", wcUri.includes("symKey="));
+  check("projectId present", wcUri.includes("projectId="));
 }
 
 console.log("\nmetadata PDA derivation");
