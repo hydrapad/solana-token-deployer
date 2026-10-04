@@ -6,16 +6,24 @@ second step where anything can go missing.
 
 Ships as a single HTML file. Double-click it; no install, no build, no server.
 
+**Live:** <https://hydrapad.github.io/solana-token-deployer/>
+
 ---
 
 ## Quick start
 
-1. Open `dist/sol-token-launcher.html` in Chrome, Edge, Firefox or Brave.
-2. Click **Connect wallet** and approve in Phantom, Solflare, Backpack, OKX or
+Either open the hosted app above, or download
+[`dist/sol-token-launcher.html`](dist/sol-token-launcher.html) and double-click
+it. Both run the same build; the hosted copy is rebuilt from this repository on
+every push, so it always matches the source.
+
+Then:
+
+1. Click **Connect wallet** and approve in Phantom, Solflare, Backpack, OKX or
    any other Wallet Standard wallet.
-3. Fill in the name, symbol and supply. Leave the three "Lock it down" boxes
+2. Fill in the name, symbol and supply. Leave the three "Lock it down" boxes
    ticked.
-4. Click **Deploy**. Approve the single transaction in your wallet.
+3. Click **Deploy**. Approve the single transaction in your wallet.
 
 The app starts on **Devnet**, where tokens are worthless and free test SOL is
 available from [faucet.solana.com](https://faucet.solana.com). Try it there
@@ -92,7 +100,13 @@ test/
   plan.test.ts      offline checks on instruction encoding and sizes
   onchain.cases.ts  real simulations against live devnet + mainnet
   harness.mjs       builds a mock-RPC build for UI testing
+.github/workflows/
+  pages.yml         typecheck + test + build + deploy to GitHub Pages
 ```
+
+`dist/` is not committed. Every push to `main` rebuilds the single file from
+source, asserts it is still self-contained and intact, and publishes it to
+<https://hydrapad.github.io/solana-token-deployer/>.
 
 ### Notes on the transaction
 
