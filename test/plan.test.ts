@@ -25,6 +25,7 @@ import {
 
 import { base58Encode } from "../src/lib/base58";
 import { metadataAddressFor, planDeploy, type RentTable, type TokenSpec } from "../src/lib/deploy";
+import { extractPublicKey } from "../src/lib/wallet";
 import { describeSupplyProblem, parseSupply, toBaseUnits } from "../src/lib/units";
 
 const SYSTEM_PROGRAM = SystemProgram.programId;
@@ -388,6 +389,32 @@ console.log("\noptional pieces can be switched off");
   const bareMeta = planDeploy(baseSpec({ hasMetadata: false }), RENT);
   eq("no metadata transaction", bareMeta.steps.length, 1);
   eq("no metadata address", bareMeta.metadataAddress, null);
+}
+
+console.log("\nwallet provider connect shapes");
+{
+  // Injected providers disagree wildly about what connect() resolves to.
+  // Solflare returns `true`; some return nothing when already connected.
+  // All of these previously threw "reading 'toBase58'".
+  const addr = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+
+  eq("PublicKey instance", extractPublicKey(new PublicKey(addr))?.toBase58(), addr);
+  eq("base58 string", extractPublicKey(addr)?.toBase58(), addr);
+  eq("{ publicKey } object", extractPublicKey({ publicKey: new PublicKey(addr) })?.toBase58(), addr);
+  eq("{ publicKey } as string", extractPublicKey({ publicKey: addr })?.toBase58(), addr);
+  eq("{ address } object", extractPublicKey({ address: addr })?.toBase58(), addr);
+  eq("nested { publicKey: { address } }", extractPublicKey({ publicKey: { address: addr } })?.toBase58(), addr);
+
+  // The shapes that were crashing.
+  eq("true (Solflare) -> falls back to null", extractPublicKey(true), null);
+  eq("undefined -> null", extractPublicKey(undefined), null);
+  eq("null -> null", extractPublicKey(null), null);
+  eq("false -> null", extractPublicKey(false), null);
+  eq("empty string -> null", extractPublicKey(""), null);
+  eq("whitespace -> null", extractPublicKey("   "), null);
+  eq("garbage string -> null", extractPublicKey("not-an-address"), null);
+  eq("{} -> null", extractPublicKey({}), null);
+  eq("0 -> null", extractPublicKey(0), null);
 }
 
 console.log("\nmetadata PDA derivation");

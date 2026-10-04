@@ -143,23 +143,38 @@ function requireSolanaFeature(wallet: StandardWallet, name: string): Feature {
 async function connectStandard(option: WalletOption): Promise<Session> {
   const wallet = option.standardWallet!;
   const connect = wallet.getFeatures()["standard:connect"] as
-    | { connect(): Promise<{ accounts: { address: string }[] }> }
+    | { connect(): Promise<{ accounts?: { address?: string }[] }> }
     | undefined;
 
-  let accounts: { address: string }[];
+  let accounts: { address?: string }[];
   if (connect) {
-    accounts = (await connect.connect()).accounts;
+    accounts = (await connect.connect())?.accounts ?? [];
   } else {
     // Some wallets publish features but expose accounts only after the legacy handshake.
-    const legacy = option.legacyProvider;
-    const { publicKey } = legacy ? await legacy.connect() : { publicKey: null as never };
-    if (!publicKey) throw new Error(`${option.name} did not return an account.`);
-    accounts = [{ address: publicKey.toBase58() }];
+    let legacy: PublicKey | null = null;
+    try {
+      legacy = extractPublicKey(await option.legacyProvider?.connect());
+    } catch {
+      /* fall through to the error below */
+    }
+    if (!legacy) {
+      throw new Error(
+        `${option.name} connected but did not report a Solana account. Unlock the wallet, ` +
+          `make sure Solana is enabled, and try again — or pick a different wallet.`,
+      );
+    }
+    return buildSession(option, wallet, legacy, []);
   }
 
-  const address = accounts?.[0]?.address;
-  if (!address) throw new Error(`${option.name} did not return an account.`);
-  const publicKey = new PublicKey(address);
+  // Defensive: tolerate a bare string, a PublicKey, or a missing accounts array.
+  const publicKey =
+    extractPublicKey(accounts?.[0]?.address) ?? extractPublicKey(accounts);
+  if (!publicKey) {
+    throw new Error(
+      `${option.name} connected but did not report a Solana account. Unlock the wallet, ` +
+        `make sure Solana is enabled, and try again — or pick a different wallet.`,
+    );
+  }
 
   const listeners: ((publicKey: PublicKey | null) => void)[] = [];
   const emit = (next: PublicKey | null) => {
@@ -171,11 +186,20 @@ async function connectStandard(option: WalletOption): Promise<Session> {
     | { on(event: "change" | "disconnect", cb: (payload: unknown) => void): () => void }
     | undefined;
   events?.on("change", (payload) => {
-    const changed = (payload as { accounts?: { address: string }[] })?.accounts?.[0]?.address;
-    emit(changed ? new PublicKey(changed) : null);
+    const changed = (payload as { accounts?: { address?: string }[] })?.accounts?.[0]?.address;
+    emit(extractPublicKey(changed));
   });
   events?.on("disconnect", () => emit(null));
 
+  return buildSession(option, wallet, publicKey, listeners);
+}
+
+function buildSession(
+  option: WalletOption,
+  wallet: StandardWallet,
+  publicKey: PublicKey,
+  listeners: ((publicKey: PublicKey | null) => void)[],
+): Session {
   return {
     key: option.key,
     name: option.name,
@@ -215,17 +239,70 @@ async function connectStandard(option: WalletOption): Promise<Session> {
   };
 }
 
+/**
+ * Pull a base58 address out of whatever an injected provider hands back.
+ *
+ * Providers genuinely disagree here, so all of these are real:
+ *   - a PublicKey instance                       (most wallets)
+ *   - "9WzD…c4Tb"                               (some report a string)
+ *   - { publicKey }                              (documented EIP-1193 style)
+ *   - { address }                                (Wallet Standard style)
+ *   - true, or nothing at all                    (Solflare's connect() returns true)
+ */
+export function extractPublicKey(value: unknown): PublicKey | null {
+  if (value === null || value === undefined || value === true || value === false) return null;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    try {
+      return new PublicKey(trimmed);
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof value === "object") {
+    const candidate = value as {
+      toBase58?: () => string;
+      publicKey?: unknown;
+      address?: unknown;
+    };
+    if (typeof candidate.toBase58 === "function") {
+      try {
+        return new PublicKey(candidate.toBase58());
+      } catch {
+        return null;
+      }
+    }
+    return extractPublicKey(candidate.publicKey ?? candidate.address ?? null);
+  }
+
+  return null;
+}
+
 async function connectLegacy(option: WalletOption): Promise<Session> {
   const provider = option.legacyProvider!;
-  const { publicKey: raw } = await provider.connect();
 
-  // Providers are inconsistent: some hand back a PublicKey, some a base58 string.
-  const address = typeof raw === "string" ? raw : raw.toBase58();
-  const publicKey = new PublicKey(address);
+  let publicKey: PublicKey | null = null;
+  try {
+    publicKey = extractPublicKey(await provider.connect());
+  } catch {
+    // Some wallets reject connect() when a session already exists; the
+    // provider's own publicKey is still authoritative, so fall through.
+  }
+  publicKey ??= extractPublicKey(provider.publicKey);
+
+  if (!publicKey) {
+    throw new Error(
+      `${option.name} connected but did not report a Solana account. Unlock the wallet, ` +
+        `make sure Solana is enabled, and try again — or pick a different wallet.`,
+    );
+  }
 
   const listeners: ((publicKey: PublicKey | null) => void)[] = [];
   provider.on?.("accountsChanged", (account) => {
-    const next = typeof account === "string" && account ? new PublicKey(account) : null;
+    const next = extractPublicKey(account);
     const sameAccount = next !== null && next.toBase58() === publicKey.toBase58();
     for (const cb of listeners) cb(sameAccount ? publicKey : next);
   });
@@ -240,7 +317,13 @@ async function connectLegacy(option: WalletOption): Promise<Session> {
     onAccountChange: (cb) => listeners.push(cb),
     async sendTransaction(tx, connection) {
       const signed = await provider.signTransaction(tx);
-      return connection.sendRawTransaction(signed.serialize(), {
+      if (!signed) {
+        throw new Error(`${option.name} returned no signed transaction.`);
+      }
+      // Providers may hand back a VersionedTransaction or a legacy Transaction;
+      // both serialise to the same wire format.
+      const raw = (signed as { serialize(): Uint8Array }).serialize();
+      return connection.sendRawTransaction(raw, {
         skipPreflight: false,
         maxRetries: 3,
       });
