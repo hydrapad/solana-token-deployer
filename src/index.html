@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Solana Token Launcher</title>
+    <meta
+      name="description"
+      content="Deploy an SPL token on Solana in your browser. The whole supply goes to your wallet."
+    />
+    <style>
+      /*__STYLES__*/
+    </style>
+  </head>
+  <body>
+    <div class="net-banner" id="netBanner" hidden></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <h1>Token Launcher</h1>
+          <p class="brand-sub">Solana SPL token &middot; built in your browser</p>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="segmented" role="group" aria-label="Network">
+          <button type="button" class="seg is-active" data-network="devnet">Devnet</button>
+          <button type="button" class="seg" data-network="mainnet-beta">Mainnet</button>
+        </div>
+        <button type="button" class="btn btn-wallet" id="connectBtn">
+          <span id="connectLabel">Connect wallet</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="card wallet-card" id="walletCard" hidden>
+        <div class="wallet-row">
+          <div>
+            <span class="label">Connected wallet</span>
+            <div class="mono" id="walletAddress"></div>
+          </div>
+          <div class="wallet-bal">
+            <span class="label">Balance</span>
+            <div class="mono" id="walletBalance">&mdash;</div>
+          </div>
+        </div>
+        <div class="note note-warn" id="lowFundsNote" hidden></div>
+      </section>
+
+      <form id="form" autocomplete="off" novalidate>
+        <!-- 1. Token details -->
+        <section class="card">
+          <h2><span class="step">1</span> Token details</h2>
+          <div class="grid-2">
+            <label class="field">
+              <span>Name</span>
+              <input id="name" name="name" maxlength="32" placeholder="My Coin" required />
+              <small class="hint" data-count="name"></small>
+            </label>
+            <label class="field">
+              <span>Symbol</span>
+              <input
+                id="symbol"
+                name="symbol"
+                maxlength="10"
+                placeholder="MYC"
+                required
+                style="text-transform: uppercase"
+              />
+              <small class="hint" data-count="symbol"></small>
+            </label>
+            <label class="field">
+              <span>Decimals</span>
+              <input id="decimals" name="decimals" type="number" min="0" max="9" value="9" required />
+              <small class="hint">Most tokens use 9. Use 0 for whole numbers.</small>
+            </label>
+            <label class="field">
+              <span>Supply</span>
+              <input id="supply" name="supply" type="number" min="1" step="any" value="1000000000" required />
+              <small class="hint" id="supplyHint"></small>
+            </label>
+          </div>
+        </section>
+
+        <!-- 2. Branding -->
+        <section class="card">
+          <h2><span class="step">2</span> Logo &amp; links <em class="tag">optional</em></h2>
+          <p class="lede">
+            These live in a JSON file. Add a <strong>metadata URL</strong> below and they show up
+            with a logo in every wallet.
+          </p>
+
+          <div class="grid-2">
+            <label class="field">
+              <span>Logo image URL</span>
+              <input id="image" placeholder="https://.../logo.png" />
+              <small class="hint">A direct link to a PNG or JPG (ideally 256&times;256).</small>
+            </label>
+            <label class="field">
+              <span>Metadata JSON URL</span>
+              <input id="uri" placeholder="ipfs://... or https://.../token.json" />
+              <small class="hint">Where the JSON above is hosted. IPFS, Arweave or any https URL.</small>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Description</span>
+            <textarea id="description" rows="2" maxlength="1000" placeholder="What is this token for?"></textarea>
+            <small class="hint" data-count="description"></small>
+          </label>
+
+          <div class="grid-3">
+            <label class="field">
+              <span>X / Twitter</span>
+              <input id="twitter" placeholder="https://x.com/yourhandle" />
+            </label>
+            <label class="field">
+              <span>Telegram</span>
+              <input id="telegram" placeholder="https://t.me/yourgroup" />
+            </label>
+            <label class="field">
+              <span>Website</span>
+              <input id="website" placeholder="https://example.com" />
+            </label>
+          </div>
+
+          <div class="meta-actions">
+            <button type="button" class="btn btn-ghost" id="jsonBtn">
+              Generate JSON file
+            </button>
+            <label class="checkbox compact">
+              <input type="checkbox" id="autoUpload" />
+              <span>Upload it for me (IPFS)</span>
+            </label>
+            <input
+              id="ipfsKey"
+              type="password"
+              placeholder="Pinata or Filebase API key"
+              autocomplete="off"
+              hidden
+            />
+            <span class="note note-plain" id="uploadNote"></span>
+          </div>
+        </section>
+
+        <!-- 3. Recipient -->
+        <section class="card">
+          <h2><span class="step">3</span> Who gets the tokens</h2>
+          <label class="radio">
+            <input type="radio" name="recipientMode" value="self" checked />
+            <span>
+              <strong>My connected wallet</strong>
+              <em class="mono" id="recipientSelf"></em>
+            </span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="recipientMode" value="custom" />
+            <span><strong>A different wallet</strong><em>Fund a team member or a multisig</em></span>
+          </label>
+          <label class="field" id="customRecipientField" hidden>
+            <span>Recipient address</span>
+            <input id="recipient" class="mono" placeholder="Base58 Solana address" />
+          </label>
+        </section>
+
+        <!-- 4. Safety -->
+        <section class="card">
+          <h2><span class="step">4</span> Lock it down</h2>
+          <p class="lede">All three are on by default. Turning one off leaves a control in your hands.</p>
+          <label class="checkbox">
+            <input type="checkbox" id="revokeMint" checked />
+            <span>
+              <strong>Revoke mint authority</strong>
+              <em>Supply can never increase. Nobody, including you, can print more tokens.</em>
+            </span>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="revokeFreeze" checked />
+            <span>
+              <strong>Revoke freeze authority</strong>
+              <em>Holders can always sell. No wallet can be blacklisted or frozen.</em>
+            </span>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="lockMetadata" checked />
+            <span>
+              <strong>Lock metadata</strong>
+              <em>Name, logo and links become permanent and cannot be swapped later.</em>
+            </span>
+          </label>
+        </section>
+
+        <!-- 5. Advanced -->
+        <details class="card advanced" id="advanced">
+          <summary><span class="step">5</span> Advanced <em class="tag">optional</em></summary>
+          <div class="grid-2">
+            <label class="field">
+              <span>RPC endpoint</span>
+              <input id="rpc" placeholder="https://api.mainnet-beta.solana.com" />
+              <small class="hint">
+                A free public node is used by default. Paste your own (Helius, QuickNode, Triton)
+                for better speed and reliability.
+              </small>
+            </label>
+            <div class="field">
+              <span>Seller fee</span>
+              <input id="sellerFee" type="number" min="0" max="10000" step="0.01" value="0" />
+              <small class="hint">Royalty % on secondary sales. 0 is right for almost every token.</small>
+            </div>
+          </div>
+          <label class="checkbox compact">
+            <input type="checkbox" id="remember" checked />
+            <span>Remember my settings on this device</span>
+          </label>
+        </details>
+
+        <!-- Summary + submit -->
+        <section class="card summary-card">
+          <dl class="summary">
+            <div><dt>Base units minted</dt><dd class="mono" id="sumRaw">&mdash;</dd></div>
+            <div><dt>Rent (mint + recipient account)</dt><dd id="sumRent">&mdash;</dd></div>
+            <div><dt>Rent (metadata account)</dt><dd id="sumMeta">&mdash;</dd></div>
+            <div><dt>Network fees</dt><dd id="sumFees">&mdash;</dd></div>
+            <div class="total"><dt>Total to sign</dt><dd id="sumTotal">&mdash;</dd></div>
+          </dl>
+          <button type="submit" class="btn btn-primary btn-lg" id="deployBtn">
+            Deploy token
+          </button>
+          <p class="deploy-hint" id="deployHint">Connect your wallet to get started.</p>
+        </section>
+      </form>
+
+      <!-- Progress -->
+      <section class="card hidden" id="progressCard">
+        <h2><span class="step pulse" id="progressStep">1</span> <span id="progressTitle">Working</span></h2>
+        <ul class="log" id="log"></ul>
+        <div class="progress-actions">
+          <button type="button" class="btn btn-ghost hidden" id="retryBtn">Try again</button>
+        </div>
+      </section>
+
+      <!-- Success -->
+      <section class="card success hidden" id="successCard">
+        <div class="success-head">
+          <div class="tick" aria-hidden="true"></div>
+          <div>
+            <h2>Token deployed</h2>
+            <p class="lede" id="successSub"></p>
+          </div>
+        </div>
+
+        <div class="result-rows">
+          <div class="result-row">
+            <span class="label">Token address</span>
+            <div class="copy-row">
+              <code class="mono" id="mintAddress"></code>
+              <button type="button" class="btn btn-ghost btn-sm" data-copy="#mintAddress">Copy</button>
+            </div>
+          </div>
+          <div class="result-row">
+            <span class="label">Recipient</span>
+            <div class="copy-row">
+              <code class="mono" id="recipientAddress"></code>
+              <button type="button" class="btn btn-ghost btn-sm" data-copy="#recipientAddress">Copy</button>
+            </div>
+          </div>
+          <div class="result-row">
+            <span class="label">Holding</span>
+            <code class="mono" id="holdingAmount"></code>
+          </div>
+        </div>
+
+        <h3>Where to go next</h3>
+        <ol class="next" id="nextSteps"></ol>
+
+        <div class="success-actions">
+          <a class="btn btn-ghost" id="explorerLink" target="_blank" rel="noopener">View on Solscan</a>
+          <a class="btn btn-ghost" id="pumpLink" target="_blank" rel="noopener">Open on Pump.fun</a>
+          <button type="button" class="btn btn-ghost" id="downloadBtn">Download receipt</button>
+          <button type="button" class="btn btn-primary" id="againBtn">Launch another token</button>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <p>
+          Runs entirely in this page. Your keys never leave your wallet &mdash; this app only
+          builds and submits transactions you approve. Token creation is irreversible.
+        </p>
+        <p class="foot-license">
+          Licensed under the
+          <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener"
+            >GNU AGPL-3.0</a
+          >.
+          <a
+            id="sourceLink"
+            href="https://github.com/hydrapad/solana-token-deployer"
+            target="_blank"
+            rel="noopener"
+            >Source code</a
+          >
+        </p>
+      </footer>
+    </main>
+
+    <!-- Wallet picker -->
+    <dialog class="modal" id="walletModal">
+      <h3>Choose a wallet</h3>
+      <ul class="wallet-list" id="walletList"></ul>
+      <p class="note note-warn" id="walletModalNote" hidden>
+        No wallet extension detected. Install
+        <a href="https://phantom.app" target="_blank" rel="noopener">Phantom</a>,
+        <a href="https://solflare.com" target="_blank" rel="noopener">Solflare</a> or
+        <a href="https://backpack.exchange" target="_blank" rel="noopener">Backpack</a>,
+        then reload.
+      </p>
+      <form method="dialog"><button class="btn btn-ghost">Cancel</button></form>
+    </dialog>
+
+    <!-- Metadata JSON preview -->
+    <dialog class="modal" id="jsonModal">
+      <h3>Metadata JSON</h3>
+      <p class="lede" id="jsonModalLede"></p>
+      <pre class="json-preview mono" id="jsonPreview"></pre>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="copyJsonBtn">Copy JSON</button>
+        <button type="button" class="btn btn-ghost" id="downloadJsonBtn">Download file</button>
+        <form method="dialog"><button class="btn btn-primary">Done</button></form>
+      </div>
+    </dialog>
+
+    <div class="toast-host" id="toastHost" aria-live="polite"></div>
+
+    <script>
+      /*__SCRIPT__*/
+    </script>
+  </body>
+</html>

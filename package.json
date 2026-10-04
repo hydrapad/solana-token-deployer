@@ -1,0 +1,27 @@
+{
+  "name": "sol-token-launcher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Zero-install browser app to deploy an SPL token on Solana and send the entire supply to the creator's wallet.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "serve": "node serve.mjs",
+    "test": "node test/run.mjs",
+    "test:live": "node test/onchain.test.mjs",
+    "harness": "node test/harness.mjs",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@metaplex-foundation/mpl-token-metadata": "2.13.0",
+    "@solana/spl-token": "0.4.15",
+    "@solana/web3.js": "1.99.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}
